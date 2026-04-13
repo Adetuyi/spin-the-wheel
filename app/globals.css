@@ -17,12 +17,6 @@
   --border-bright: rgba(71, 247, 173, 0.4);
 }
 
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
-
 html {
   scroll-behavior: smooth;
   -webkit-tap-highlight-color: transparent;
