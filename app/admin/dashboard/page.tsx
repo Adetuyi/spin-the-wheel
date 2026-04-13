@@ -38,7 +38,14 @@ type Stats = {
   prizeCounts: Record<string, number>
 }
 
-type Tab = 'spins' | 'leads' | 'stats'
+type AllowlistEntry = {
+  id: string
+  email: string
+  note: string | null
+  added_at: string
+}
+
+type Tab = 'spins' | 'leads' | 'stats' | 'allowlist'
 
 export default function AdminDashboard() {
   const router = useRouter()
@@ -46,17 +53,25 @@ export default function AdminDashboard() {
   const [leads, setLeads] = useState<Lead[]>([])
   const [spins, setSpins] = useState<Spin[]>([])
   const [stats, setStats] = useState<Stats | null>(null)
+  const [allowlist, setAllowlist] = useState<AllowlistEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [claimingId, setClaimingId] = useState<string | null>(null)
+  const [resettingId, setResettingId] = useState<string | null>(null)
   const [filter, setFilter] = useState<'all' | 'unclaimed' | 'claimed'>('unclaimed')
+  // Allowlist form
+  const [newEmail, setNewEmail] = useState('')
+  const [newNote, setNewNote] = useState('')
+  const [allowlistLoading, setAllowlistLoading] = useState(false)
+  const [allowlistError, setAllowlistError] = useState('')
 
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
-      const [leadsRes, spinsRes, statsRes] = await Promise.all([
+      const [leadsRes, spinsRes, statsRes, allowlistRes] = await Promise.all([
         fetch('/api/admin/leads'),
         fetch('/api/admin/spins'),
         fetch('/api/admin/stats'),
+        fetch('/api/admin/allowlist'),
       ])
       if (leadsRes.status === 401 || spinsRes.status === 401) {
         router.push('/admin')
@@ -65,9 +80,11 @@ export default function AdminDashboard() {
       const leadsData = await leadsRes.json()
       const spinsData = await spinsRes.json()
       const statsData = await statsRes.json()
+      const allowlistData = await allowlistRes.json()
       setLeads(leadsData.leads ?? [])
       setSpins(spinsData.spins ?? [])
       setStats(statsData)
+      setAllowlist(allowlistData.allowlist ?? [])
     } catch {
       // silently retry on next tab switch
     } finally {
@@ -93,6 +110,51 @@ export default function AdminDashboard() {
     } finally {
       setClaimingId(null)
     }
+  }
+
+  const handleResetSpins = async (leadId: string, spins: number) => {
+    setResettingId(leadId)
+    try {
+      const res = await fetch('/api/admin/reset-spins', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadId, spins }),
+      })
+      if (res.ok) {
+        setLeads((prev) => prev.map((l) => l.id === leadId ? { ...l, spins_remaining: spins } : l))
+      }
+    } finally {
+      setResettingId(null)
+    }
+  }
+
+  const handleAddAllowlist = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setAllowlistError('')
+    setAllowlistLoading(true)
+    try {
+      const res = await fetch('/api/admin/allowlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: newEmail, note: newNote }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setAllowlistError(data.error ?? 'Failed to add email.'); return }
+      setAllowlist((prev) => [data.entry, ...prev])
+      setNewEmail('')
+      setNewNote('')
+    } finally {
+      setAllowlistLoading(false)
+    }
+  }
+
+  const handleRemoveAllowlist = async (id: string) => {
+    await fetch('/api/admin/allowlist', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    })
+    setAllowlist((prev) => prev.filter((e) => e.id !== id))
   }
 
   const handleExportLeads = () => {
@@ -181,6 +243,7 @@ export default function AdminDashboard() {
         <button style={tabStyle('spins')} onClick={() => setTab('spins')}>Prizes</button>
         <button style={tabStyle('leads')} onClick={() => setTab('leads')}>Leads</button>
         <button style={tabStyle('stats')} onClick={() => setTab('stats')}>Stats</button>
+        <button style={tabStyle('allowlist')} onClick={() => setTab('allowlist')}>Allowlist</button>
       </div>
 
       <main className="flex-1 px-4 py-4 overflow-auto">
@@ -357,6 +420,7 @@ export default function AdminDashboard() {
                         <th>Phone</th>
                         <th>Company</th>
                         <th>Role</th>
+                        <th>Spins Left</th>
                         <th>Ref Code</th>
                         <th>Referred By</th>
                         <th>Registered</th>
@@ -370,19 +434,36 @@ export default function AdminDashboard() {
                           <td>{lead.company_name ?? '—'}</td>
                           <td>{lead.role ?? '—'}</td>
                           <td>
-                            <span
-                              className="badge badge-primary"
-                              style={{ fontFamily: 'var(--font-syne)', fontSize: '0.65rem' }}
-                            >
+                            <div className="flex items-center gap-1">
+                              <span style={{ fontFamily: 'var(--font-syne)', fontWeight: 700, color: lead.spins_remaining > 0 ? 'var(--primary)' : 'var(--text-muted)', minWidth: '18px' }}>
+                                {lead.spins_remaining}
+                              </span>
+                              <button
+                                onClick={() => handleResetSpins(lead.id, 1)}
+                                disabled={resettingId === lead.id}
+                                title="Reset to 1 spin"
+                                style={{ fontFamily: 'var(--font-syne)', fontWeight: 700, fontSize: '0.65rem', letterSpacing: '0.04em', padding: '3px 8px', borderRadius: '5px', border: '1px solid var(--border-bright)', background: 'transparent', color: 'var(--primary)', cursor: 'pointer', opacity: resettingId === lead.id ? 0.5 : 1, whiteSpace: 'nowrap' }}
+                              >
+                                {resettingId === lead.id ? '…' : '↺ Reset'}
+                              </button>
+                              <button
+                                onClick={() => handleResetSpins(lead.id, lead.spins_remaining + 1)}
+                                disabled={resettingId === lead.id}
+                                title="Give +1 spin"
+                                style={{ fontFamily: 'var(--font-syne)', fontWeight: 700, fontSize: '0.65rem', letterSpacing: '0.04em', padding: '3px 8px', borderRadius: '5px', border: '1px solid rgba(71,247,173,0.15)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', opacity: resettingId === lead.id ? 0.5 : 1 }}
+                              >
+                                +1
+                              </button>
+                            </div>
+                          </td>
+                          <td>
+                            <span className="badge badge-primary" style={{ fontFamily: 'var(--font-syne)', fontSize: '0.65rem' }}>
                               {lead.referral_code}
                             </span>
                           </td>
                           <td style={{ color: 'var(--text-muted)' }}>{lead.referred_by_code ?? '—'}</td>
                           <td style={{ color: 'var(--text-muted)' }}>
-                            {new Date(lead.created_at).toLocaleString('en-NG', {
-                              dateStyle: 'short',
-                              timeStyle: 'short',
-                            })}
+                            {new Date(lead.created_at).toLocaleString('en-NG', { dateStyle: 'short', timeStyle: 'short' })}
                           </td>
                         </tr>
                       ))}
@@ -490,6 +571,78 @@ export default function AdminDashboard() {
                     })}
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* ── Allowlist tab ── */}
+            {tab === 'allowlist' && (
+              <div className="flex flex-col gap-4">
+                <div className="card p-4">
+                  <p style={{ fontFamily: 'var(--font-syne)', fontWeight: 700, fontSize: '0.75rem', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '4px' }}>
+                    Allow personal emails
+                  </p>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '14px' }}>
+                    Add specific personal email addresses that should bypass the business email restriction.
+                  </p>
+                  <form onSubmit={handleAddAllowlist} className="flex flex-col gap-3">
+                    <div>
+                      <label className="input-label" style={{ fontFamily: 'var(--font-syne)' }}>Email address</label>
+                      <input
+                        className="input"
+                        type="email"
+                        placeholder="someone@gmail.com"
+                        value={newEmail}
+                        onChange={(e) => setNewEmail(e.target.value)}
+                        required
+                        style={{ fontFamily: 'var(--font-instrument)' }}
+                      />
+                    </div>
+                    <div>
+                      <label className="input-label" style={{ fontFamily: 'var(--font-syne)' }}>Note (optional)</label>
+                      <input
+                        className="input"
+                        type="text"
+                        placeholder="e.g. VIP guest, speaker"
+                        value={newNote}
+                        onChange={(e) => setNewNote(e.target.value)}
+                        style={{ fontFamily: 'var(--font-instrument)' }}
+                      />
+                    </div>
+                    {allowlistError && (
+                      <p style={{ fontSize: '0.8rem', color: '#f87171' }}>{allowlistError}</p>
+                    )}
+                    <button
+                      type="submit"
+                      disabled={allowlistLoading}
+                      style={{ fontFamily: 'var(--font-syne)', fontWeight: 700, fontSize: '0.8rem', letterSpacing: '0.05em', textTransform: 'uppercase', padding: '10px 20px', borderRadius: '10px', border: 'none', background: 'var(--primary)', color: 'var(--secondary-dark)', cursor: 'pointer', opacity: allowlistLoading ? 0.6 : 1 }}
+                    >
+                      {allowlistLoading ? 'Adding…' : '+ Add Email'}
+                    </button>
+                  </form>
+                </div>
+
+                {allowlist.length === 0 ? (
+                  <div className="card p-6 text-center">
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>No emails allowlisted yet.</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {allowlist.map((entry) => (
+                      <div key={entry.id} className="card p-3 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p style={{ fontSize: '0.875rem', color: 'var(--text-primary)', fontWeight: 500 }}>{entry.email}</p>
+                          {entry.note && <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{entry.note}</p>}
+                        </div>
+                        <button
+                          onClick={() => handleRemoveAllowlist(entry.id)}
+                          style={{ fontFamily: 'var(--font-syne)', fontWeight: 600, fontSize: '0.7rem', letterSpacing: '0.05em', textTransform: 'uppercase', padding: '5px 12px', borderRadius: '6px', border: '1px solid rgba(239,68,68,0.3)', background: 'transparent', color: '#f87171', cursor: 'pointer', flexShrink: 0 }}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { PRIZES } from '@/lib/prizes'
@@ -51,19 +51,34 @@ export default function SpinPage() {
   const [spinsRemaining, setSpinsRemaining] = useState<number | null>(null)
   const [error, setError] = useState('')
   const [winningIndex, setWinningIndex] = useState<number | null>(null)
+  const [referralCode, setReferralCode] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
   const animFrameRef = useRef<number | null>(null)
   const startTimeRef = useRef<number>(0)
   const startRotRef = useRef(0)
   const totalRotRef = useRef(0)
   const durationRef = useRef(5000)
 
-  // Fetch remaining spins
+  // Fetch remaining spins + referral code
   useEffect(() => {
     fetch('/api/spin/status')
       .then((r) => r.json())
       .then((d) => setSpinsRemaining(d.spinsRemaining ?? 0))
       .catch(() => setSpinsRemaining(0))
+
+    fetch('/api/me')
+      .then((r) => r.json())
+      .then((d) => setReferralCode(d.referralCode ?? null))
+      .catch(() => {})
   }, [])
+
+  const copyReferral = useCallback(async () => {
+    if (!referralCode) return
+    const url = `${window.location.origin}/?ref=${referralCode}`
+    await navigator.clipboard.writeText(url).catch(() => {})
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2500)
+  }, [referralCode])
 
   const handleSpin = async () => {
     if (isSpinning || spinsRemaining === 0) return
@@ -379,18 +394,55 @@ export default function SpinPage() {
           {error && (
             <p style={{ color: '#f87171', fontSize: '0.85rem', textAlign: 'center' }}>{error}</p>
           )}
-
-          {!canSpin && !isSpinning && spinsRemaining === 0 && (
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', textAlign: 'center' }}>
-              Refer a colleague to earn another spin!
-            </p>
-          )}
         </div>
+
+        {/* Referral CTA — always visible */}
+        {referralCode && (
+          <div
+            className="w-full card p-4 flex flex-col gap-2"
+            style={{ borderColor: 'rgba(71,247,173,0.2)' }}
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <p style={{ fontFamily: 'var(--font-syne)', fontWeight: 700, fontSize: '0.8rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                  🎁 Refer a friend
+                </p>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                  They spin, you get another turn
+                </p>
+              </div>
+              <button
+                onClick={copyReferral}
+                style={{
+                  fontFamily: 'var(--font-syne)',
+                  fontWeight: 700,
+                  fontSize: '0.72rem',
+                  letterSpacing: '0.05em',
+                  textTransform: 'uppercase',
+                  padding: '8px 14px',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border-bright)',
+                  background: copied ? 'rgba(71,247,173,0.15)' : 'transparent',
+                  color: 'var(--primary)',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  transition: 'all 0.2s ease',
+                  flexShrink: 0,
+                }}
+              >
+                {copied ? '✓ Copied!' : '🔗 Copy Link'}
+              </button>
+            </div>
+          </div>
+        )}
       </main>
 
       {/* Prize legend */}
       <div className="w-full max-w-sm relative z-10">
-        <div className="divider mb-4" />
+        <div className="divider mb-3" />
+        <p style={{ fontFamily: 'var(--font-syne)', fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', textAlign: 'center', marginBottom: '10px' }}>
+          Potential gifts to be won
+        </p>
         <div className="grid grid-cols-3 gap-2">
           {PRIZES.filter((p) => p.slug !== 'no_prize').map((prize) => (
             <div

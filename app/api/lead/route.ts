@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { createSession, getSessionCookieName } from '@/lib/session'
+import { isPersonalEmail, PERSONAL_EMAIL_ERROR } from '@/lib/email-validation'
 import { customAlphabet } from 'nanoid'
 
 const nanoid = customAlphabet('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 6)
@@ -14,11 +15,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Email and phone are required.' }, { status: 400 })
     }
 
+    const normalisedEmail = email.toLowerCase().trim()
+
+    // Check allowlist before domain validation
+    const { data: allowed } = await supabaseAdmin
+      .from('email_allowlist')
+      .select('id')
+      .eq('email', normalisedEmail)
+      .maybeSingle()
+
+    if (!allowed && isPersonalEmail(normalisedEmail)) {
+      return NextResponse.json({ error: PERSONAL_EMAIL_ERROR }, { status: 422 })
+    }
+
     // Check if email already registered
     const { data: existing } = await supabaseAdmin
       .from('leads')
       .select('id, spins_remaining, referral_code')
-      .eq('email', email.toLowerCase().trim())
+      .eq('email', normalisedEmail)
       .maybeSingle()
 
     if (existing) {
@@ -66,7 +80,7 @@ export async function POST(request: NextRequest) {
     const { data: lead, error: insertError } = await supabaseAdmin
       .from('leads')
       .insert({
-        email: email.toLowerCase().trim(),
+        email: normalisedEmail,
         phone: phone.trim(),
         company_name: company_name?.trim() || null,
         role: role || null,
